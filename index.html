@@ -1,24 +1,55 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
+	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta name="description" content="Given an image, this page will display a text version using braille as 1-bit pixels">
+	<meta name="description" content="Convert images to braille art - turn any image into readable braille text">
 	<title>Image to Braille</title>
+	<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⠿</text></svg>">
 	<link rel="stylesheet" href="style.css">
-	<script src="braille.js"></script>
-	<script src="dithering.js"></script>
-	<script src="main.js"></script>
 </head>
 <body>
-	<textarea id="text" readonly></textarea>
-	<div id="options">
-		<div><a href="https://github.com/505e06b2/Image-to-Braille" target="_blank">Open Repo</a></div>
-		<div><input id="file" type="file" accept="image/*"></div>
+	<div id="loading">Processing...</div>
+	<div id="error-message" role="alert" aria-live="polite"></div>
+	<div id="preview-container">
+		<img id="preview" alt="Original image preview" aria-label="Original image preview">
+	</div>
+	<textarea id="text" readonly aria-label="Braille output"></textarea>
+	<nav id="options">
+		<div><a href="https://github.com/505e06b2/Image-to-Braille" target="_blank" rel="noopener">Open Repo</a></div>
+		<div>
+			<label for="file">Load Image:</label>
+			<input id="file" type="file" accept="image/*" aria-label="Choose image file">
+		</div>
 
-		<div title="Toggle dark theme"><input type="checkbox" id="darktheme"> Dark Theme</div>
-		<div title="Invert black with white"><input type="checkbox" id="inverted"> Invert</div>
-		<div title="Monochrome dithering"><input type="checkbox" id="dithering"> Dithering</div>
-		<div title="Disable placeholder spacing"><input type="checkbox" id="monospace"> Monospace</div>
-		<div title="Greyscale Mode">
+		<div>
+			<input type="checkbox" id="preview-toggle" aria-label="Show image preview">
+			<label for="preview-toggle">Show Preview</label>
+		</div>
+
+		<div>
+			<input type="checkbox" id="darktheme" aria-label="Toggle dark theme">
+			<label for="darktheme">Dark Theme</label>
+		</div>
+		<div>
+			<input type="checkbox" id="inverted" aria-label="Invert colors">
+			<label for="inverted">Invert</label>
+		</div>
+		<div>
+			<input type="checkbox" id="dithering" aria-label="Enable dithering">
+			<label for="dithering">Dithering</label>
+		</div>
+		<div>
+			<input type="checkbox" id="monospace" aria-label="Disable placeholder spacing">
+			<label for="monospace">Monospace</label>
+		</div>
+		<div>
+			<label for="threshold">Threshold:</label>
+			<input type="range" id="threshold" min="0" max="255" value="128" aria-label="Brightness threshold">
+			<span id="threshold-value">128</span>
+		</div>
+		<div>
+			<label for="greyscale_mode">Greyscale:</label>
 			<select id="greyscale_mode">
 				<option value="luminance">Luminance</option>
 				<option value="lightness">Lightness</option>
@@ -27,15 +58,23 @@
 			</select>
 		</div>
 		<div>
-			<input type="number" min="2" value="50" step="2" max="500" id="width">
-			Width (characters)
+			<label for="width">Width (chars):</label>
+			<input type="number" min="2" value="50" step="2" max="500" id="width" aria-label="Output width in characters">
 		</div>
 		<div>
-			<button id="clipboard">Copy to clipboard</button>
+			<button id="clipboard" type="button" aria-label="Copy output to clipboard">Copy to clipboard</button>
+			<span class="hint">Ctrl+C</span>
 		</div>
 		<div>
-			Character Count: <span id="charcount">0</span>
+			<button id="export" type="button" aria-label="Save as text file">Save as .txt</button>
 		</div>
-	</div>
+		<div>
+			<button id="reset" type="button" aria-label="Reset all settings to defaults">Reset</button>
+		</div>
+		<div>
+			<span id="charcount">0</span>
+		</div>
+	</nav>
+	<script type="module" src="main.js"></script>
 </body>
 </html>

@@ -1,4 +1,19 @@
-function createImageCanvas(src) {
+import { settings } from './settings.js';
+
+const ALPHA_THRESHOLD = 128;
+
+const GREYSCALE_MODES = {
+	luminance: (r, g, b) => 0.22 * r + 0.72 * g + 0.06 * b,
+	lightness: (r, g, b) => (Math.max(r, g, b) + Math.min(r, g, b)) / 2,
+	average: (r, g, b) => (r + g + b) / 3,
+	value: (r, g, b) => Math.max(r, g, b),
+};
+
+const SHIFT_VALUES = [0, 1, 2, 6, 3, 4, 5, 7];
+const BRAILLE_OFFSET = 0x2800;
+const BLANK_OFFSET = 4;
+
+export function createImageCanvas(src) {
 	return new Promise((resolve, reject) => {
 		const canvas = document.createElement("CANVAS");
 		const image = new Image();
@@ -6,106 +21,157 @@ function createImageCanvas(src) {
 		image.onload = () => {
 			let width = image.width;
 			let height = image.height;
-			if(image.width != (settings.width * 2)) {
-				width = settings.width * 2;
-				height = width * image.height / image.width;
+
+			const targetWidth = Math.max(2, settings.width) * 2;
+
+			if (image.width !== targetWidth) {
+				width = targetWidth;
+				height = Math.round((width / image.width) * image.height);
 			}
 
-			//nearest multiple
 			canvas.width = width - (width % 2);
 			canvas.height = height - (height % 4);
 
-			ctx = canvas.getContext("2d");
-			ctx.fillStyle = "#FFFFFF"; //get rid of alpha
-			ctx.fillRect(0,0, canvas.width,canvas.height);
+			if (canvas.width < 2 || canvas.height < 4) {
+				reject(new Error('Image too small after processing.'));
+				return;
+			}
 
-			ctx.mozImageSmoothingEnabled = false;
-			ctx.webkitImageSmoothingEnabled = false;
-			ctx.msImageSmoothingEnabled = false;
+			const ctx = canvas.getContext("2d");
+			ctx.fillStyle = "#FFFFFF";
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.imageSmoothingEnabled = false;
+			ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-			ctx.drawImage(image, 0,0, canvas.width,canvas.height);
 			resolve(canvas);
-		}
+		};
+
+		image.onerror = () => reject(new Error('Failed to load image.'));
 
 		image.src = src;
 	});
 }
 
-function pixelsToCharacter(pixels_lo_hi) { //expects an array of 8 bools
-	//Codepoint reference - https://www.ssec.wisc.edu/~tomw/java/unicode.html#x2800
-	const shift_values = [0, 1, 2, 6, 3, 4, 5, 7]; //correspond to dots in braille chars compared to the given array
-	let codepoint_offset = 0;
-	for(const i in pixels_lo_hi) {
-		codepoint_offset += (+pixels_lo_hi[i]) << shift_values[i];
-	}
-
-	if(codepoint_offset === 0 && settings.monospace === false) { //pixels were all blank
-		codepoint_offset = 4; //0x2800 is a blank braille char, 0x2804 is a single dot
-	}
-    return String.fromCharCode(0x2800 + codepoint_offset);
-}
-
 function toGreyscale(r, g, b) {
-	switch(settings.greyscale_mode) {
-		case "luminance":
-			return (0.22 * r) + (0.72 * g) + (0.06 * b);
-
-		case "lightness":
-			return (Math.max(r,g,b) + Math.min(r,g,b)) / 2;
-
-		case "average":
-			return (r + g + b) / 3;
-
-		case "value":
-			return Math.max(r,g,b);
-
-		default:
-			console.error("Greyscale mode is not valid");
-			return 0;
-	}
+	const fn = GREYSCALE_MODES[settings.greyscale_mode];
+	return fn ? fn(r, g, b) : 0;
 }
 
-function canvasToText(canvas) {
+function pixelsToCharacter(pixels) {
+	let codepoint = 0;
+	for (let i = 0; i < 8; i++) {
+		codepoint += pixels[i] << SHIFT_VALUES[i];
+	}
+
+	if (codepoint === 0 && !settings.monospace) {
+		codepoint = BLANK_OFFSET;
+	}
+
+	return String.fromCodePoint(BRAILLE_OFFSET + codepoint);
+}
+
+export function canvasToText(canvas) {
 	const ctx = canvas.getContext("2d");
 	const width = canvas.width;
 	const height = canvas.height;
+	const threshold = settings.threshold;
 
-	let image_data = [];
-	if(settings.dithering) {
-		if(settings.last_dithering === null || settings.last_dithering.canvas !== canvas) {
-			settings.last_dithering = new Dithering(canvas);
+	let imageData;
+	if (settings.dithering) {
+		if (!settings.lastDithering || settings.lastDithering.canvas !== canvas) {
+			settings.lastDithering = new Dithering(canvas, threshold);
 		}
-		image_data = settings.last_dithering.image_data;
+		imageData = settings.lastDithering.image_data;
 	} else {
-		image_data = new Uint8Array(ctx.getImageData(0,0,width,height).data.buffer);
+		imageData = new Uint8ClampedArray(ctx.getImageData(0, 0, width, height).data);
 	}
 
-	let output = "";
+	const rows = height / 4;
+	const cols = width / 2;
+	let output = '';
 
-	for(let imgy = 0; imgy < height; imgy += 4) {
-		for(let imgx = 0; imgx < width; imgx += 2) {
-			const braille_info = [0,0,0,0,0,0,0,0];
-			let dot_index = 0;
-			for(let x = 0; x < 2; x++) {
-				for(let y = 0; y < 4; y++) {
-					const index = (imgx+x + width * (imgy+y)) * 4;
-					const pixel_data = image_data.slice(index, index+4); //ctx.getImageData(imgx+x,imgy+y,1,1).data
-					if(pixel_data[3] >= 128) { //account for alpha
-						const grey = toGreyscale(pixel_data[0], pixel_data[1], pixel_data[2]);
-						if(settings.inverted) {
-							if(grey >= 128) braille_info[dot_index] = 1;
-						} else {
-							if(grey <= 128) braille_info[dot_index] = 1;
-						}
+	for (let row = 0; row < rows; row++) {
+		for (let col = 0; col < cols; col++) {
+			const braille = [0, 0, 0, 0, 0, 0, 0, 0];
+			let dotIndex = 0;
+
+			for (let x = 0; x < 2; x++) {
+				for (let y = 0; y < 4; y++) {
+					const px = col * 2 + x;
+					const py = row * 4 + y;
+					const idx = (py * width + px) * 4;
+
+					const alpha = imageData[idx + 3];
+					if (alpha >= ALPHA_THRESHOLD) {
+						const grey = toGreyscale(
+							imageData[idx],
+							imageData[idx + 1],
+							imageData[idx + 2]
+						);
+						const isLit = settings.inverted ? grey >= threshold : grey < threshold;
+						braille[dotIndex] = isLit ? 1 : 0;
 					}
-					dot_index++;
+					dotIndex++;
 				}
 			}
-			output += pixelsToCharacter(braille_info);
+			output += pixelsToCharacter(braille);
 		}
-		output += "\n";
+		output += '\n';
 	}
 
 	return output;
 }
+
+class Dithering {
+	constructor(canvas, threshold = 128) {
+		this.canvas = canvas;
+		this.threshold = threshold;
+		this.image_data = new Uint8ClampedArray(canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data);
+
+		this._process();
+	}
+
+	_process() {
+		const w = this.canvas.width;
+		const h = this.canvas.height;
+		const data = this.image_data;
+		const threshold = this.threshold;
+
+		for (let y = 0; y < h; y++) {
+			for (let x = 0; x < w; x++) {
+				const idx = (y * w + x) * 4;
+				const oldR = data[idx];
+				const oldG = data[idx + 1];
+				const oldB = data[idx + 2];
+
+				const luminance = 0.2126 * oldR + 0.7152 * oldG + 0.0722 * oldB;
+				const newL = luminance > threshold ? 255 : 0;
+
+				data[idx] = newL;
+				data[idx + 1] = newL;
+				data[idx + 2] = newL;
+				data[idx + 3] = 255;
+
+				const err = luminance - newL;
+
+				if (x + 1 < w) this._addError(x + 1, y, err, 7 / 16, w);
+				if (x > 0 && y + 1 < h) this._addError(x - 1, y + 1, err, 3 / 16, w);
+				if (y + 1 < h) this._addError(x, y + 1, err, 5 / 16, w);
+				if (x + 1 < w && y + 1 < h) this._addError(x + 1, y + 1, err, 1 / 16, w);
+			}
+		}
+	}
+
+	_addError(x, y, err, factor, canvasWidth) {
+		const idx = (y * canvasWidth + x) * 4;
+		this.image_data[idx] = this._clip(this.image_data[idx] + err * factor);
+		this.image_data[idx + 1] = this._clip(this.image_data[idx + 1] + err * factor);
+		this.image_data[idx + 2] = this._clip(this.image_data[idx + 2] + err * factor);
+	}
+
+	_clip(v) {
+		return v < 0 ? 0 : v > 255 ? 255 : v;
+	}
+}
+
+export { Dithering };
